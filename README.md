@@ -1,5 +1,3 @@
-# 窗口置顶工具 (WindowTopMost)
-
 一个简单易用的Windows小插件，通过可编程的快捷键实现当前选中窗口的置顶功能。
 
 下载压缩包-解压运行WindowTopMost.exe
