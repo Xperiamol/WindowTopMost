@@ -1,0 +1,21 @@
+# WindowTopMost - 窗口置顶工具
+# .NET 6.0 Windows Forms 应用程序
+
+# 运行时要求:
+# - .NET 6.0 Runtime (Windows)
+# - Windows 操作系统
+
+# 开发依赖:
+# Microsoft.WindowsDesktop.App (6.0.0) - Windows Forms 和 WPF 支持
+# System.Text.Json - JSON 配置文件处理
+# System.Drawing.Common - 图标和图像处理
+
+# 构建工具:
+# dotnet CLI (6.0+)
+
+# 项目特性:
+# - 全局热键注册
+# - 系统托盘集成
+# - 窗口置顶管理
+# - 配置文件持久化
+# - 自启动支持
