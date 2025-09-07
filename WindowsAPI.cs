@@ -24,6 +24,11 @@ namespace WindowTopMost
         // 获取窗口信息相关常量
         public const int GWL_EXSTYLE = -20;
         public const int WS_EX_TOPMOST = 0x00000008;
+        public const int WS_EX_LAYERED = 0x00080000;
+        
+        // 透明度相关常量
+        public const int GWL_EXSTYLE_LAYERED = -20;
+        public const int LWA_ALPHA = 0x00000002;
 
         [DllImport("user32.dll")]
         public static extern IntPtr GetForegroundWindow();
@@ -45,6 +50,12 @@ namespace WindowTopMost
 
         [DllImport("user32.dll")]
         public static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll")]
+        public static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte bAlpha, uint dwFlags);
 
         /// <summary>
         /// 获取窗口标题
@@ -74,6 +85,51 @@ namespace WindowTopMost
             
             int insertAfter = topMost ? HWND_TOPMOST : HWND_NOTOPMOST;
             return SetWindowPos(hWnd, insertAfter, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        }
+
+        /// <summary>
+        /// 设置窗口透明度
+        /// </summary>
+        /// <param name="hWnd">窗口句柄</param>
+        /// <param name="opacity">透明度 (0-255, 0为完全透明，255为完全不透明)</param>
+        /// <returns>设置是否成功</returns>
+        public static bool SetWindowOpacity(IntPtr hWnd, byte opacity)
+        {
+            if (!IsWindow(hWnd)) return false;
+            
+            // 获取当前窗口样式
+            int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+            
+            // 添加分层窗口样式
+            if ((exStyle & WS_EX_LAYERED) == 0)
+            {
+                SetWindowLong(hWnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
+            }
+            
+            // 设置透明度
+            return SetLayeredWindowAttributes(hWnd, 0, opacity, LWA_ALPHA);
+        }
+
+        /// <summary>
+        /// 移除窗口透明度效果
+        /// </summary>
+        /// <param name="hWnd">窗口句柄</param>
+        /// <returns>移除是否成功</returns>
+        public static bool RemoveWindowOpacity(IntPtr hWnd)
+        {
+            if (!IsWindow(hWnd)) return false;
+            
+            // 获取当前窗口样式
+            int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+            
+            // 移除分层窗口样式
+            if ((exStyle & WS_EX_LAYERED) != 0)
+            {
+                SetWindowLong(hWnd, GWL_EXSTYLE, exStyle & ~WS_EX_LAYERED);
+                return true;
+            }
+            
+            return false;
         }
     }
 }

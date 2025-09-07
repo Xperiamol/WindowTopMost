@@ -12,7 +12,10 @@ namespace WindowTopMost
         private NotifyIcon notifyIcon;
         private ContextMenuStrip contextMenu;
         private Dictionary<IntPtr, bool> windowStates = new Dictionary<IntPtr, bool>();
+        private Dictionary<IntPtr, byte> windowTransparency = new Dictionary<IntPtr, byte>(); // 存储每个窗口的透明度
         private const int HOTKEY_ID = 1;
+        private const int HOTKEY_TRANSPARENCY_INCREASE = 2;
+        private const int HOTKEY_TRANSPARENCY_DECREASE = 3;
         
         // 配置管理
         private AppConfig config;
@@ -87,6 +90,11 @@ namespace WindowTopMost
             autoStartItem.Click += AutoStartItem_Click;
             contextMenu.Items.Add(autoStartItem);
             
+            var notificationItem = new ToolStripMenuItem("启用通知");
+            notificationItem.Checked = config.EnableNotifications;
+            notificationItem.Click += NotificationItem_Click;
+            contextMenu.Items.Add(notificationItem);
+            
             contextMenu.Items.Add(new ToolStripSeparator());
             
             var aboutItem = new ToolStripMenuItem("关于");
@@ -124,7 +132,7 @@ namespace WindowTopMost
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // 如果加载图标失败，使用系统默认图标
                 normalIcon = SystemIcons.Application;
@@ -164,13 +172,19 @@ namespace WindowTopMost
             }
             
             // 清理无效窗口
-            foreach (var window in windowsToRemove)
-            {
-                windowStates.Remove(window);
-            }
+            RemoveWindowsFromTracking(windowsToRemove);
             
             hasTopMostWindows = foundTopMost;
             UpdateTrayIcon();
+        }
+        
+        private void RemoveWindowsFromTracking(List<IntPtr> windows)
+        {
+            foreach (var window in windows)
+            {
+                windowStates.Remove(window);
+                windowTransparency.Remove(window);
+            }
         }
 
         private void EnsureHotKeyRegistration()
@@ -178,6 +192,8 @@ namespace WindowTopMost
             // 模拟设置确定按钮的操作，确保热键正确注册
             // 先注销可能存在的旧热键
             WindowsAPI.UnregisterHotKey(this.Handle, HOTKEY_ID);
+            WindowsAPI.UnregisterHotKey(this.Handle, HOTKEY_TRANSPARENCY_INCREASE);
+            WindowsAPI.UnregisterHotKey(this.Handle, HOTKEY_TRANSPARENCY_DECREASE);
             
             // 重新应用当前配置的热键设置
             config.HotKeyModifiers = hotKeyModifiers;
@@ -205,18 +221,82 @@ namespace WindowTopMost
             {
                 MessageBox.Show("热键注册失败，可能已被其他程序占用。", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+            
+            // 注册透明度调节热键
+            WindowsAPI.RegisterHotKey(this.Handle, HOTKEY_TRANSPARENCY_INCREASE, 
+                config.TransparencyIncreaseModifiers, config.TransparencyIncreaseVirtualKey);
+            WindowsAPI.RegisterHotKey(this.Handle, HOTKEY_TRANSPARENCY_DECREASE, 
+                config.TransparencyDecreaseModifiers, config.TransparencyDecreaseVirtualKey);
         }
 
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == WindowsAPI.WM_HOTKEY)
             {
-                if (m.WParam.ToInt32() == HOTKEY_ID)
+                int hotkeyId = m.WParam.ToInt32();
+                if (hotkeyId == HOTKEY_ID)
                 {
                     ToggleCurrentWindowTopMost();
                 }
+                else if (hotkeyId == HOTKEY_TRANSPARENCY_INCREASE)
+                {
+                    AdjustCurrentWindowTransparency(true);
+                }
+                else if (hotkeyId == HOTKEY_TRANSPARENCY_DECREASE)
+                {
+                    AdjustCurrentWindowTransparency(false);
+                }
             }
             base.WndProc(ref m);
+        }
+        
+        private void ShowNotification(string title, string message, ToolTipIcon icon)
+        {
+            if (config.EnableNotifications)
+            {
+                notifyIcon.ShowBalloonTip(2000, title, message, icon);
+            }
+        }
+        
+        private void AdjustCurrentWindowTransparency(bool increase)
+        {
+            IntPtr currentWindow = WindowsAPI.GetForegroundWindow();
+            if (currentWindow == IntPtr.Zero || currentWindow == this.Handle)
+                return;
+                
+            // 获取当前窗口的透明度，如果没有记录则使用默认值
+            byte currentOpacity = windowTransparency.ContainsKey(currentWindow) ? 
+                windowTransparency[currentWindow] : (byte)255;
+                
+            // 计算新的透明度值
+            int newOpacity = currentOpacity;
+            if (increase)
+            {
+                newOpacity = Math.Min(255, currentOpacity + config.TransparencyStep);
+            }
+            else
+            {
+                newOpacity = Math.Max(50, currentOpacity - config.TransparencyStep); // 最小透明度50，避免完全透明
+            }
+            
+            // 应用透明度
+            if (WindowsAPI.SetWindowOpacity(currentWindow, (byte)newOpacity))
+            {
+                windowTransparency[currentWindow] = (byte)newOpacity;
+                
+                // 获取窗口标题用于通知
+                string windowTitle = WindowsAPI.GetWindowTitle(currentWindow);
+                if (string.IsNullOrEmpty(windowTitle))
+                    windowTitle = "未知窗口";
+                    
+                int percentage = (int)Math.Round((double)newOpacity / 255 * 100);
+                string message = $"窗口 '{windowTitle}' 透明度已调整为 {percentage}%";
+                ShowNotification("透明度调节", message, ToolTipIcon.Info);
+            }
+            else
+            {
+                ShowNotification("错误", "无法调节窗口透明度", ToolTipIcon.Error);
+            }
         }
 
         private void ToggleCurrentWindowTopMost()
@@ -235,6 +315,20 @@ namespace WindowTopMost
             
             if (WindowsAPI.SetWindowTopMost(foregroundWindow, newTopMostState))
             {
+                // 应用透明度设置（仅在窗口置顶时）
+                if (newTopMostState && config.EnableTransparency)
+                {
+                    // 使用该窗口的独立透明度设置，如果没有则使用全局默认值
+                    byte opacity = windowTransparency.ContainsKey(foregroundWindow) ? 
+                        windowTransparency[foregroundWindow] : (byte)config.TransparencyLevel;
+                    WindowsAPI.SetWindowOpacity(foregroundWindow, opacity);
+                }
+                else if (!newTopMostState)
+                {
+                    // 取消置顶时移除透明度效果，但保留透明度记录
+                    WindowsAPI.RemoveWindowOpacity(foregroundWindow);
+                }
+                
                 // 更新窗口状态记录
                 windowStates[foregroundWindow] = newTopMostState;
                 
@@ -246,11 +340,11 @@ namespace WindowTopMost
                     $"窗口 '{windowTitle}' 已设置为置顶" : 
                     $"窗口 '{windowTitle}' 已取消置顶";
                     
-                notifyIcon.ShowBalloonTip(2000, "窗口置顶工具", message, ToolTipIcon.Info);
+                ShowNotification("窗口置顶工具", message, ToolTipIcon.Info);
             }
             else
             {
-                notifyIcon.ShowBalloonTip(2000, "错误", "无法设置窗口置顶状态", ToolTipIcon.Error);
+                ShowNotification("错误", "无法设置窗口置顶状态", ToolTipIcon.Error);
             }
         }
 
@@ -265,16 +359,28 @@ namespace WindowTopMost
         private void SettingsItem_Click(object sender, EventArgs e)
         {
             // 显示设置对话框
-            using (var settingsForm = new SettingsForm(hotKeyModifiers, hotKeyVirtualKey))
+            using (var settingsForm = new SettingsForm(hotKeyModifiers, hotKeyVirtualKey, config.EnableTransparency, config.TransparencyLevel, config.TransparencyIncreaseModifiers, config.TransparencyIncreaseVirtualKey, config.TransparencyDecreaseModifiers, config.TransparencyDecreaseVirtualKey))
             {
                 if (settingsForm.ShowDialog() == DialogResult.OK)
                 {
                     // 注销旧热键
                     WindowsAPI.UnregisterHotKey(this.Handle, HOTKEY_ID);
+                    WindowsAPI.UnregisterHotKey(this.Handle, HOTKEY_TRANSPARENCY_INCREASE);
+                    WindowsAPI.UnregisterHotKey(this.Handle, HOTKEY_TRANSPARENCY_DECREASE);
                     
                     // 更新热键设置
                     hotKeyModifiers = settingsForm.Modifiers;
                     hotKeyVirtualKey = settingsForm.VirtualKey;
+                    
+                    // 更新透明度设置
+                    config.EnableTransparency = settingsForm.EnableTransparency;
+                    config.TransparencyLevel = settingsForm.TransparencyLevel;
+                    
+                    // 更新透明度热键设置
+                    config.TransparencyIncreaseModifiers = settingsForm.TransparencyIncreaseModifiers;
+                    config.TransparencyIncreaseVirtualKey = settingsForm.TransparencyIncreaseVirtualKey;
+                    config.TransparencyDecreaseModifiers = settingsForm.TransparencyDecreaseModifiers;
+                    config.TransparencyDecreaseVirtualKey = settingsForm.TransparencyDecreaseVirtualKey;
                     
                     // 保存配置
                     config.HotKeyModifiers = hotKeyModifiers;
@@ -315,6 +421,25 @@ namespace WindowTopMost
                     ConfigManager.SaveConfig(config);
                     
                     string message = newAutoStartState ? "已启用开机自启" : "已禁用开机自启";
+                    ShowNotification("窗口置顶工具", message, ToolTipIcon.Info);
+                }
+            }
+        }
+
+        private void NotificationItem_Click(object sender, EventArgs e)
+        {
+            var menuItem = sender as ToolStripMenuItem;
+            if (menuItem != null)
+            {
+                bool newNotificationState = !menuItem.Checked;
+                menuItem.Checked = newNotificationState;
+                config.EnableNotifications = newNotificationState;
+                ConfigManager.SaveConfig(config);
+                
+                string message = newNotificationState ? "已启用通知" : "已禁用通知";
+                // 只有在启用通知时才显示这个通知
+                if (newNotificationState)
+                {
                     notifyIcon.ShowBalloonTip(2000, "窗口置顶工具", message, ToolTipIcon.Info);
                 }
             }
@@ -345,6 +470,10 @@ namespace WindowTopMost
                         // 取消置顶
                         WindowsAPI.SetWindowPos(windowHandle, WindowsAPI.HWND_NOTOPMOST, 0, 0, 0, 0,
                             WindowsAPI.SWP_NOMOVE | WindowsAPI.SWP_NOSIZE | WindowsAPI.SWP_NOACTIVATE);
+                        
+                        // 移除透明度效果
+                        WindowsAPI.RemoveWindowOpacity(windowHandle);
+                        
                         clearedCount++;
                     }
                     windowsToRemove.Add(windowHandle);
@@ -352,10 +481,7 @@ namespace WindowTopMost
             }
             
             // 从字典中移除已处理的窗口
-            foreach (var windowHandle in windowsToRemove)
-            {
-                windowStates.Remove(windowHandle);
-            }
+            RemoveWindowsFromTracking(windowsToRemove);
             
             // 更新托盘图标
             CheckTopMostWindows();
@@ -364,7 +490,7 @@ namespace WindowTopMost
             string message = clearedCount > 0 ? 
                 $"已取消 {clearedCount} 个窗口的置顶状态" : 
                 "没有找到置顶的窗口";
-            notifyIcon.ShowBalloonTip(2000, "窗口置顶工具", message, ToolTipIcon.Info);
+            ShowNotification("窗口置顶工具", message, ToolTipIcon.Info);
         }
 
         private string GetHotKeyText()
@@ -391,6 +517,8 @@ namespace WindowTopMost
             {
                 // 注销热键
                 WindowsAPI.UnregisterHotKey(this.Handle, HOTKEY_ID);
+                WindowsAPI.UnregisterHotKey(this.Handle, HOTKEY_TRANSPARENCY_INCREASE);
+                WindowsAPI.UnregisterHotKey(this.Handle, HOTKEY_TRANSPARENCY_DECREASE);
                 
                 // 清理托盘图标
                 if (notifyIcon != null)

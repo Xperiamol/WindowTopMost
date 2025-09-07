@@ -11,6 +11,20 @@ namespace WindowTopMost
         public uint HotKeyModifiers { get; set; } = WindowsAPI.MOD_CONTROL | WindowsAPI.MOD_ALT;
         public uint HotKeyVirtualKey { get; set; } = (uint)Keys.T;
         public bool AutoStart { get; set; } = false;
+        public bool EnableTransparency { get; set; } = false;
+        public int TransparencyLevel { get; set; } = 200; // 0-255, 默认200 (约78%不透明)
+        
+        // 透明度调节热键
+        public uint TransparencyIncreaseModifiers { get; set; } = WindowsAPI.MOD_CONTROL | WindowsAPI.MOD_ALT;
+        public uint TransparencyIncreaseVirtualKey { get; set; } = (uint)Keys.Up;
+        public uint TransparencyDecreaseModifiers { get; set; } = WindowsAPI.MOD_CONTROL | WindowsAPI.MOD_ALT;
+        public uint TransparencyDecreaseVirtualKey { get; set; } = (uint)Keys.Down;
+        public int TransparencyStep { get; set; } = 25; // 每次调节的步长
+        
+
+        
+        // 通知设置
+        public bool EnableNotifications { get; set; } = true; // 是否启用通知
     }
 
     public static class ConfigManager
